@@ -5,6 +5,9 @@ import math
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 import cv2
+import torchvision
+from torch.utils.data import Dataset, DataLoader
+import pickle
 
 # %%
 class SinusoidalPositionEmbeddings(nn.Module):
@@ -121,21 +124,34 @@ sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - alphas_cumprod)
 posterior_variance = betas * (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
 
 # %%
-def add_noise(x):
+def add_noise(x,t):
     noise = torch.randn_like(x)
-    return sqrt_alphas_cumprod * x + sqrt_one_minus_alphas_cumprod * noise
+    return torch.index_select(sqrt_alphas_cumprod, 0, t) * x + torch.index_select(sqrt_one_minus_alphas_cumprod, 0, t) * noise
 
 # %%
-def q_sample(x_start, t, noise=None):
-    if noise is None:
-        noise = torch.randn_like(x_start)
-    
+class ImageDataset(Dataset):
 
-    sqrt_alphas_cumprod_t = extract(sqrt_alphas_cumprod, t, x_start.shape)
-    sqrt_one_minus_alphas_cumprod_t = extract(
-        sqrt_one_minus_alphas_cumprod, t, x_start.shape
-    )
+    def __init__(self, data, transform=None):
+        self.data = data
+        self.l = len(self.data)
+        self.transform = transform
 
-    return sqrt_alphas_cumprod_t * x_start + sqrt_one_minus_alphas_cumprod_t * noise
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        sample = self.data[idx]
+        if self.transform:
+            sample = self.transform(sample)
+
+        return sample
+
+# %%
+def get_data_loader(batch_size=200):
+    file = open('C:/VSCode/Datasets/Faces/train_dataset_small.pkl', 'rb')
+    dataset = pickle.load(file)
+    file.close()
+    loader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True)
+    return loader
 
 
