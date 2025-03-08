@@ -113,21 +113,6 @@ def beta_schedule(timesteps, s=0.008):
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
     return torch.clip(betas, 0.0001, 0.9999)
 
-timesteps = 200
-betas = beta_schedule(timesteps=timesteps)
-alphas = 1. - betas
-alphas_cumprod = torch.cumprod(alphas, axis=0)
-alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0)
-sqrt_recip_alphas = torch.sqrt(1.0 / alphas)
-sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
-sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - alphas_cumprod)
-posterior_variance = betas * (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
-
-# %%
-def add_noise(x,t):
-    noise = torch.randn_like(x)
-    return torch.index_select(sqrt_alphas_cumprod, 0, t) * x + torch.index_select(sqrt_one_minus_alphas_cumprod, 0, t) * noise
-
 # %%
 class ImageDataset(Dataset):
 
@@ -153,5 +138,26 @@ def get_data_loader(batch_size=200):
     file.close()
     loader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True)
     return loader
+
+# %%
+class schedule():
+    def __init__(self, timesteps = 200):
+        betas = beta_schedule(timesteps=timesteps)
+        alphas = 1. - betas
+        alphas_cumprod = torch.cumprod(alphas, axis=0)
+        alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0)
+        self.sqrt_recip_alphas = torch.sqrt(1.0 / alphas)
+        self.sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
+        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - alphas_cumprod)
+        self.posterior_variance = betas * (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
+    def add_noise(self, x,t):
+        noise = torch.randn_like(x)
+        return torch.index_select(self.sqrt_alphas_cumprod, 0, t) * x + torch.index_select(self.sqrt_one_minus_alphas_cumprod, 0, t) * noise
+    def loss(model, x0, t):
+        noise = torch.randn_like(x0)
+        xt = self.add_noise(x0,t)
+        pred = model(xt, t)
+        loss = F.mse_loss(noise, pred)
+        return loss
 
 
