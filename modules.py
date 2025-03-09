@@ -131,6 +131,7 @@ class ImageDataset(Dataset):
 
         return sample
 
+
 # %%
 def get_data_loader(batch_size=200):
     file = open('C:/VSCode/Datasets/Faces/test_dataset_small.pkl', 'rb')
@@ -166,5 +167,7 @@ class schedule():
         #save_image(x0[0], str("results/" + str(random.randint(0,100))+".png"), nrow = 6)
         loss = torch.mean((noise - pred)**2, dim=(1,2,3))
         return loss
+
+
 
 
