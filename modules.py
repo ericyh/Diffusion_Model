@@ -148,6 +148,7 @@ class schedule():
         alphas = 1. - betas
         alphas_cumprod = torch.cumprod(alphas, axis=0)
         alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0)
+        self.betas = betas
         self.sqrt_recip_alphas = torch.sqrt(1.0 / alphas)
         self.sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - alphas_cumprod)
@@ -167,7 +168,18 @@ class schedule():
         #save_image(x0[0], str("results/" + str(random.randint(0,100))+".png"), nrow = 6)
         loss = torch.mean((noise - pred)**2, dim=(1,2,3))
         return loss
-
+    
+    @torch.no_grad()
+    def sample(self, model, device, time_steps):
+        img = torch.randn((1, 3, 112, 112), device=device)*0.5
+        img = torch.clamp(img, -1.0, 1.0)
+        for t in range(0,time_steps)[::-1]:
+            model_mean = self.sqrt_recip_alphas[t] * (img - self.betas[t] * model(img, torch.unsqueeze(torch.tensor(t,device = device), dim=0)) / self.sqrt_one_minus_alphas_cumprod[t])
+            noise = torch.randn_like(model_mean)
+            img = model_mean + torch.sqrt(self.posterior_variance[t]) * noise
+            img = torch.clamp(img, -1.0, 1.0)
+            plt.imshow(img[0].detach().cpu())
+            plt.show()
 
 
 
