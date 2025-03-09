@@ -10,6 +10,7 @@ from torch.utils.data import Dataset, DataLoader
 import pickle
 from torchvision.utils import save_image
 import random
+import numpy as np
 
 # %%
 class SinusoidalPositionEmbeddings(nn.Module):
@@ -134,7 +135,7 @@ class ImageDataset(Dataset):
 
 # %%
 def get_data_loader(batch_size=200):
-    file = open('C:/VSCode/Datasets/Faces/test_dataset_small.pkl', 'rb')
+    file = open('C:/VSCode/Datasets/Faces/train_dataset_small.pkl', 'rb')
     dataset = pickle.load(file)
     file.close()
     loader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True)
@@ -171,6 +172,7 @@ class schedule():
     
     @torch.no_grad()
     def sample(self, model, device, time_steps):
+        M = np.zeros((time_steps, 112, 112, 3))
         img = torch.randn((1, 3, 112, 112), device=device)*0.5
         img = torch.clamp(img, -1.0, 1.0)
         for t in range(0,time_steps)[::-1]:
@@ -178,8 +180,8 @@ class schedule():
             noise = torch.randn_like(model_mean)
             img = model_mean + torch.sqrt(self.posterior_variance[t]) * noise
             img = torch.clamp(img, -1.0, 1.0)
-            plt.imshow(img[0].detach().cpu())
-            plt.show()
-
+            out = (img[0].detach().cpu().permute(1,2,0)*0.5 + 0.5)*255
+            M[t] = out.numpy().astype(np.uint8)
+        return np.flip(M, axis = 0)
 
 
