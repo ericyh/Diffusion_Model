@@ -8,15 +8,18 @@ import cv2
 import torchvision
 from torch.utils.data import Dataset, DataLoader
 import pickle
+from torchvision.utils import save_image
+import random
 
 # %%
 class SinusoidalPositionEmbeddings(nn.Module):
-    def __init__(self, d):
+    def __init__(self, d, device):
         super().__init__()
         self.d = d
+        self.device = device
 
     def forward(self, time):
-        i = torch.arange(self.d)
+        i = torch.arange(self.d, device = self.device)
         even = 1/2*(1-(-1)**i)
         odd = 1/2*(1+(-1)**i)
         x = 1/torch.exp(math.log(10000) * ((i - i%2) / self.d))
@@ -53,11 +56,11 @@ class ResnetBlock(nn.Module):
 
 # %%
 class Unet(nn.Module):
-    def __init__ (self, time_dim, dims, channels=3):
+    def __init__ (self, time_dim, dims, channels=3, device = "cuda"):
         super().__init__()
 
         self.time_embed = nn.Sequential(
-                SinusoidalPositionEmbeddings(time_dim),
+                SinusoidalPositionEmbeddings(time_dim, device),
                 nn.Linear(time_dim, 4*time_dim),
                 nn.GELU(),
                 nn.Linear(4*time_dim, 4*time_dim),
@@ -87,27 +90,24 @@ class Unet(nn.Module):
         t = self.time_embed(t)
         res = []
         for B1, B2, downsample in self.encoder:
-            print(x.shape)
             x = B1(x, t)
             x = B2(x, t)
             res.append(x)
             x = downsample(x)
-            print(x.shape)
         x = self.mid_block(x)
         for B1, B2, upsample in self.decoder:
-            print(x.shape)
             x = upsample(x)
             x = torch.cat((x, res.pop()), dim=1)
             x = B1(x, t)
             x = B2(x, t)
-            print(x.shape)
         x = self.final_block(x)
+        return x
 
 # %%
-def beta_schedule(timesteps, s=0.008):
+def beta_schedule(timesteps, s=0.008, device="cuda"):
     # from https://colab.research.google.com/github/huggingface/notebooks/blob/main/examples/annotated_diffusion.ipynb#scrollTo=5d751df2
     steps = timesteps + 1
-    x = torch.linspace(0, timesteps, steps)
+    x = torch.linspace(0, timesteps, steps, device=device)
     alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * torch.pi * 0.5) ** 2
     alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
@@ -133,7 +133,7 @@ class ImageDataset(Dataset):
 
 # %%
 def get_data_loader(batch_size=200):
-    file = open('C:/VSCode/Datasets/Faces/train_dataset_small.pkl', 'rb')
+    file = open('C:/VSCode/Datasets/Faces/test_dataset_small.pkl', 'rb')
     dataset = pickle.load(file)
     file.close()
     loader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True)
@@ -141,8 +141,9 @@ def get_data_loader(batch_size=200):
 
 # %%
 class schedule():
-    def __init__(self, timesteps = 200):
-        betas = beta_schedule(timesteps=timesteps)
+    def __init__(self, timesteps = 200, device="cuda"):
+        self.device = device
+        betas = beta_schedule(timesteps=timesteps, device = device)
         alphas = 1. - betas
         alphas_cumprod = torch.cumprod(alphas, axis=0)
         alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0)
@@ -151,13 +152,19 @@ class schedule():
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - alphas_cumprod)
         self.posterior_variance = betas * (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
     def add_noise(self, x,t):
-        noise = torch.randn_like(x)
-        return torch.index_select(self.sqrt_alphas_cumprod, 0, t) * x + torch.index_select(self.sqrt_one_minus_alphas_cumprod, 0, t) * noise
-    def loss(model, x0, t):
-        noise = torch.randn_like(x0)
+        noise = torch.randn_like(x, device = self.device)
+        A = torch.index_select(self.sqrt_alphas_cumprod, 0, t)
+        B = torch.index_select(self.sqrt_one_minus_alphas_cumprod, 0, t)
+        x = x.permute(1,2,3,0)
+        noise = noise.permute(1,2,3,0)
+        C = (A * x + B * noise).permute(3,0,1,2)
+        return C
+    def loss(self, model, x0, t):
+        noise = torch.randn_like(x0, device = self.device)
         xt = self.add_noise(x0,t)
         pred = model(xt, t)
-        loss = F.mse_loss(noise, pred)
+        #save_image(x0[0], str("results/" + str(random.randint(0,100))+".png"), nrow = 6)
+        loss = torch.mean((noise - pred)**2, dim=(1,2,3))
         return loss
 
 
