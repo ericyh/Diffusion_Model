@@ -161,12 +161,10 @@ class schedule():
         x = x.permute(1,2,3,0)
         noise = noise.permute(1,2,3,0)
         C = (A * x + B * noise).permute(3,0,1,2)
-        return C
+        return C, noise
     def loss(self, model, x0, t):
-        noise = torch.randn_like(x0, device = self.device)
-        xt = self.add_noise(x0,t)
+        xt, noise = self.add_noise(x0,t)
         pred = model(xt, t)
-        #save_image(x0[0], str("results/" + str(random.randint(0,100))+".png"), nrow = 6)
         loss = nn.MSELoss()(noise, pred)
         return loss
     
@@ -174,12 +172,11 @@ class schedule():
     def sample(self, model, device, time_steps):
         M = np.zeros((time_steps, 28, 28, 1))
         img = torch.randn((1, 1, 28, 28), device=device)*0.5
-        img = torch.clamp(img, -1.0, 1.0)
         for t in range(0,time_steps)[::-1]:
+            print("t", t)
             model_mean = self.sqrt_recip_alphas[t] * (img - self.betas[t] * model(img, torch.unsqueeze(torch.tensor(t,device = device), dim=0)) / self.sqrt_one_minus_alphas_cumprod[t])
             noise = torch.randn_like(model_mean)
             img = model_mean + torch.sqrt(self.posterior_variance[t]) * noise
-            img = torch.clamp(img, -1.0, 1.0)
             out = (img[0].detach().cpu().permute(1,2,0)*0.5 + 0.5)*255
             M[t] = out.numpy().astype(np.uint8)
         return np.flip(M, axis = 0)
