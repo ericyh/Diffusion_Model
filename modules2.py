@@ -167,6 +167,7 @@ def extract(a, t, x_shape):
 # %%
 class schedule():
     def __init__(self, timesteps = 200, device="cuda"):
+        self.timesteps = 200
         self.device = device
         betas = beta_schedule(timesteps=timesteps, device = device)
         alphas = 1. - betas
@@ -192,13 +193,15 @@ class schedule():
         loss = F.smooth_l1_loss(noise, pred)
         return loss
     
-    def sample(self, model, device, time_steps):
-        M = np.zeros((time_steps, 28, 28, 1))
+    def sample(self, model, device):
+        M = np.zeros((self.timesteps, 28, 28, 1))
         img = torch.randn((1, 1, 28, 28), device=device)*0.5
-        for t in range(0,time_steps)[::-1]:
+        for t in range(0,self.timesteps)[::-1]:
+            print(t)
             model_mean = self.sqrt_recip_alphas[t] * (img - self.betas[t] * model(img, torch.unsqueeze(torch.tensor(t,device = device), dim=0)) / self.sqrt_one_minus_alphas_cumprod[t])
             noise = torch.randn_like(model_mean)
             img = model_mean + torch.sqrt(self.posterior_variance[t]) * noise
             out = (img[0].detach().cpu().permute(1,2,0)*0.5 + 0.5)*255
             M[t] = out.numpy().astype(np.uint8)
         return np.flip(M, axis = 0)
+
