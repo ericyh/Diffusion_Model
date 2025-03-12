@@ -165,7 +165,7 @@ class schedule():
     def loss(self, model, x0, t):
         xt, noise = self.add_noise(x0,t)
         pred = model(xt, t)
-        loss = nn.MSELoss()(noise, pred)
+        loss = nn.HuberLoss()(noise, pred)
         return loss
     
     @torch.no_grad()
@@ -176,7 +176,7 @@ class schedule():
             model_mean = self.sqrt_recip_alphas[t] * (img - self.betas[t] * model(img, torch.unsqueeze(torch.tensor(t,device = device), dim=0)) / self.sqrt_one_minus_alphas_cumprod[t])
             noise = torch.randn_like(model_mean)
             img = model_mean + torch.sqrt(self.posterior_variance[t]) * noise
-            out = ([0].detach().cpu().permute(1,2,0)*0.5 + 0.5)*255
+            out = (img[0].detach().cpu().permute(1,2,0)*0.5 + 0.5)*255
             M[t] = out.numpy().astype(np.uint8)
         return np.flip(M, axis = 0)
 
