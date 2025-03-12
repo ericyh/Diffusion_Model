@@ -220,7 +220,7 @@ class Unet(nn.Module):
         self,
         dims,
         time_dim = 200,
-        channels=3,
+        channels = 1,
     ):
         super().__init__()
 
@@ -231,64 +231,49 @@ class Unet(nn.Module):
                 nn.Linear(4*time_dim, 4*time_dim),
             )
 
-        self.downs = nn.ModuleList([])
-        self.ups = nn.ModuleList([])
+        self.init_conv = nn.Conv2d(channels, dims[0][0], 7, padding=3)
+
+        self.encoder = nn.ModuleList([])
+        self.decoder = nn.ModuleList([])
 
         for i, (dim_in, dim_out) in enumerate(dims):
-            self.downs.append(nn.ModuleList([
+            self.encoder.append(nn.ModuleList([
                 ResnetBlock(dim_in, dim_out, 4*time_dim),
                 ResnetBlock(dim_out, dim_out, 4*time_dim),
                 nn.Conv2d(dim_out,dim_out, 4, 2, 1) if not i == len(dims) - 1 else nn.Identity(),
             ]))
     
         for i, (dim_in, dim_out) in enumerate(reversed(dims)):
-            self.ups.append(nn.ModuleList([
+            self.decoder.append(nn.ModuleList([
                 ResnetBlock(2*dim_out, dim_in, 4*time_dim),
                 ResnetBlock(dim_in, dim_in, 4*time_dim),
                 nn.ConvTranspose2d(dim_in, dim_in, 4, 2, 1) if not i == len(dims) - 1 else nn.Identity(),
             ]))
 
-
         mid_dim = dims[-1][-1]
         self.mid_block1 = ResnetBlock(mid_dim, mid_dim, time_dim=4*time_dim)
         self.mid_block2 = ResnetBlock(mid_dim, mid_dim, time_dim=4*time_dim)
 
-
-        out_dim = default(out_dim, channels)
-        self.final_block = ResnetBlock(dims[0][0], out_dim, time_dim=4*time_dim)
-        self.final_conv = nn.Conv2d(out_dim, out_dim, 1)
+        self.final_block = ResnetBlock(dims[0][0], channels, time_dim=4*time_dim)
+        self.final_conv = nn.Conv2d(channels, channels, 1)
 
     def forward(self, x, time):
         x = self.init_conv(x)
-
-        t = self.time_mlp(time) if exists(self.time_mlp) else None
-
-        h = []
-
-        # downsample
-        for block1, block2, downsample in self.downs:
-            x = block1(x, t)
-            x = block2(x, t)
-            h.append(x)
-            #print(x.shape, "a")
+        t = self.time_mlp(time)
+        res = []
+        for B1, B2, downsample in self.encoder:
+            x = B1(x, t)
+            x = B2(x, t)
+            res.append(x)
             x = downsample(x)
-            #print(x.shape, "b")
-        # bottleneck
         x = self.mid_block1(x, t)
         x = self.mid_block2(x, t)
-
-        # upsample
-        for block1, block2, upsample in self.ups:
-            #print(x.shape, "c")
-            x = torch.cat((x, h.pop()), dim=1)
-            #print(x.shape, "d")
-            x = block1(x, t)
-            x = block2(x, t)
+        for B1, B2, upsample in self.decoder:
+            x = torch.cat((x, res.pop()), dim=1)
+            x = B1(x, t)
+            x = B2(x, t)
             x = upsample(x)
-            #print(x.shape, "e")
-
         x = self.final_block(x,t)
-
         return self.final_conv(x)
 
 # %% [markdown]

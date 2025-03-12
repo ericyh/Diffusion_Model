@@ -62,22 +62,25 @@ class ResnetBlock(nn.Module):
 
 # %%
 class Unet(nn.Module):
-    def __init__ (self, time_dim, dims, channels=3, device = "cuda"):
+    def __init__(
+        self,
+        dims,
+        time_dim = 200,
+        channels = 1,
+    ):
         super().__init__()
 
-        self.time_embed = nn.Sequential(
-                SinusoidalPositionEmbeddings(time_dim, device),
+        self.time_mlp = nn.Sequential(
+                SinusoidalPositionEmbeddings(time_dim),
                 nn.Linear(time_dim, 4*time_dim),
                 nn.GELU(),
                 nn.Linear(4*time_dim, 4*time_dim),
             )
-        
-        self.init_layer = nn.Conv2d(channels, dims[0][0], 7, padding=3)
+
+        self.init_conv = nn.Conv2d(channels, dims[0][0], 7, padding=3)
+
         self.encoder = nn.ModuleList([])
-        self.mid_block0 = ResnetBlock(dims[-1][-1], dims[-1][-1],4*time_dim)
-        self.mid_block1 = ResnetBlock(dims[-1][-1], dims[-1][-1],4*time_dim)
         self.decoder = nn.ModuleList([])
-        self.final_block = Block(dims[0][0], channels)
 
         for i, (dim_in, dim_out) in enumerate(dims):
             self.encoder.append(nn.ModuleList([
@@ -85,32 +88,39 @@ class Unet(nn.Module):
                 ResnetBlock(dim_out, dim_out, 4*time_dim),
                 nn.Conv2d(dim_out,dim_out, 4, 2, 1) if not i == len(dims) - 1 else nn.Identity(),
             ]))
+    
         for i, (dim_in, dim_out) in enumerate(reversed(dims)):
             self.decoder.append(nn.ModuleList([
                 ResnetBlock(2*dim_out, dim_in, 4*time_dim),
                 ResnetBlock(dim_in, dim_in, 4*time_dim),
                 nn.ConvTranspose2d(dim_in, dim_in, 4, 2, 1) if not i == len(dims) - 1 else nn.Identity(),
             ]))
-        
-    def forward(self, x, t):
-        x = self.init_layer(x)
-        t = self.time_embed(t)
+
+        mid_dim = dims[-1][-1]
+        self.mid_block1 = ResnetBlock(mid_dim, mid_dim, time_dim=4*time_dim)
+        self.mid_block2 = ResnetBlock(mid_dim, mid_dim, time_dim=4*time_dim)
+
+        self.final_block = ResnetBlock(dims[0][0], channels, time_dim=4*time_dim)
+        self.final_conv = nn.Conv2d(channels, channels, 1)
+
+    def forward(self, x, time):
+        x = self.init_conv(x)
+        t = self.time_mlp(time)
         res = []
         for B1, B2, downsample in self.encoder:
             x = B1(x, t)
             x = B2(x, t)
             res.append(x)
             x = downsample(x)
-        x = self.mid_block0(x,t)
-        x = self.mid_block1(x,t)
+        x = self.mid_block1(x, t)
+        x = self.mid_block2(x, t)
         for B1, B2, upsample in self.decoder:
             x = torch.cat((x, res.pop()), dim=1)
             x = B1(x, t)
             x = B2(x, t)
             x = upsample(x)
-        x = self.final_block(x)
-        return x
-
+        x = self.final_block(x,t)
+        return self.final_conv(x)
 # %%
 def beta_schedule(timesteps, s=0.008, device="cuda"):
     # from https://colab.research.google.com/github/huggingface/notebooks/blob/main/examples/annotated_diffusion.ipynb#scrollTo=5d751df2
