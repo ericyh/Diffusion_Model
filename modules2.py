@@ -159,12 +159,6 @@ def get_data_loader(batch_size=200):
     return loader
 
 # %%
-def extract(a, t, x_shape):
-    batch_size = t.shape[0]
-    out = a.gather(-1, t)
-    return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(t.device)
-
-# %%
 class schedule():
     def __init__(self, timesteps = 200, device="cuda"):
         self.timesteps = 200
@@ -196,8 +190,7 @@ class schedule():
     def sample(self, model, device):
         M = np.zeros((self.timesteps, 28, 28, 1))
         img = torch.randn((1, 1, 28, 28), device=device)*0.5
-        for t in range(0,self.timesteps)[::-1]:
-            print(t)
+        for t in range(len(self.betas))[::-1]:
             model_mean = self.sqrt_recip_alphas[t] * (img - self.betas[t] * model(img, torch.unsqueeze(torch.tensor(t,device = device), dim=0)) / self.sqrt_one_minus_alphas_cumprod[t])
             noise = torch.randn_like(model_mean)
             img = model_mean + torch.sqrt(self.posterior_variance[t]) * noise
