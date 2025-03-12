@@ -179,16 +179,11 @@ class schedule():
         self.posterior_variance = betas * (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
     def add_noise(self, x,t):
         noise = torch.randn_like(x, device = self.device)
-        A_ = extract(self.sqrt_alphas_cumprod, t, x.shape)
-        B_ = extract(self.sqrt_one_minus_alphas_cumprod, t, x.shape)
-
         A = torch.index_select(self.sqrt_alphas_cumprod, 0, t)
         B = torch.index_select(self.sqrt_one_minus_alphas_cumprod, 0, t)
-        x_ = x
         x = x.permute(1,2,3,0)
         noise_permuted = noise.permute(1,2,3,0)
         C = (A * x + B * noise_permuted).permute(3,0,1,2)
-        C_ = A_ * x_ + B_ * noise
 
         return C, noise
     def loss(self, model, x0, t):
@@ -197,7 +192,6 @@ class schedule():
         loss = F.smooth_l1_loss(noise, pred)
         return loss
     
-    @torch.no_grad()
     def sample(self, model, device, time_steps):
         M = np.zeros((time_steps, 28, 28, 1))
         img = torch.randn((1, 1, 28, 28), device=device)*0.5
