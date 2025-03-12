@@ -15,7 +15,7 @@ import torch.nn.functional as F
 
 # %%
 class SinusoidalPositionEmbeddings(nn.Module):
-    def __init__(self, d, device):
+    def __init__(self, d, device="cuda"):
         super().__init__()
         self.d = d
         self.device = device
@@ -35,7 +35,7 @@ class Block(nn.Module):
         super().__init__()
         self.layers = nn.Sequential(
             nn.Conv2d(in_dim, out_dim, 3, padding = 1),
-            nn.BatchNorm2d(out_dim),
+            nn.GroupNorm(1, out_dim),
             nn.SiLU(),
         )
     def forward(self, x):
@@ -43,18 +43,22 @@ class Block(nn.Module):
         return x
 
 # %%
-class ResnetBlock(nn.Module):
+class ResnetBlock(nn.Module):    
     def __init__(self, dim_in, dim_out, time_dim):
         super().__init__()
-        self.time = nn.Linear(time_dim, dim_out)
+        self.time = nn.Sequential(nn.SiLU(), nn.Linear(time_dim, dim_out))
         self.block1 = Block(dim_in, dim_out)
         self.block2 = Block(dim_out, dim_out)
+        self.res_conv = nn.Conv2d(dim_in, dim_out, 1) if dim_in != dim_out else nn.Identity()
+
 
     def forward(self, x, t):
-        x = self.block1(x)
-        x = torch.unsqueeze(torch.unsqueeze(self.time(t),-1),-1) + x
-        x = self.block2(x)
-        return x
+        y = self.block1(x)
+        t = self.time(t)
+        y = torch.unsqueeze(torch.unsqueeze(t,-1),-1) + y
+        y = self.block2(y)
+        return y + self.res_conv(x)
+
 
 # %%
 class Unet(nn.Module):
@@ -68,27 +72,28 @@ class Unet(nn.Module):
                 nn.Linear(4*time_dim, 4*time_dim),
             )
         
-        self.init_block = Block(channels, dims[0][0])
+        self.init_layer = nn.Conv2d(channels, dims[0][0], 7, padding=3)
         self.encoder = nn.ModuleList([])
-        self.mid_block = Block(dims[-1][-1], dims[-1][-1])
+        self.mid_block0 = ResnetBlock(dims[-1][-1], dims[-1][-1],4*time_dim)
+        self.mid_block1 = ResnetBlock(dims[-1][-1], dims[-1][-1],4*time_dim)
         self.decoder = nn.ModuleList([])
         self.final_block = Block(dims[0][0], channels)
 
-        for (dim_in, dim_out) in dims:
+        for i, (dim_in, dim_out) in enumerate(dims):
             self.encoder.append(nn.ModuleList([
                 ResnetBlock(dim_in, dim_out, 4*time_dim),
                 ResnetBlock(dim_out, dim_out, 4*time_dim),
-                nn.Conv2d(dim_out,dim_out, 4, 2, 1)
+                nn.Conv2d(dim_out,dim_out, 4, 2, 1) if not i == len(dims) - 1 else nn.Identity(),
             ]))
-        for (dim_in, dim_out) in reversed(dims):
+        for i, (dim_in, dim_out) in enumerate(reversed(dims)):
             self.decoder.append(nn.ModuleList([
                 ResnetBlock(2*dim_out, dim_in, 4*time_dim),
                 ResnetBlock(dim_in, dim_in, 4*time_dim),
-                nn.ConvTranspose2d(dim_out, dim_out, 4, 2, 1)
+                nn.ConvTranspose2d(dim_in, dim_in, 4, 2, 1) if not i == len(dims) - 1 else nn.Identity(),
             ]))
         
     def forward(self, x, t):
-        x = self.init_block(x)
+        x = self.init_layer(x)
         t = self.time_embed(t)
         res = []
         for B1, B2, downsample in self.encoder:
@@ -96,12 +101,13 @@ class Unet(nn.Module):
             x = B2(x, t)
             res.append(x)
             x = downsample(x)
-        x = self.mid_block(x)
+        x = self.mid_block0(x,t)
+        x = self.mid_block1(x,t)
         for B1, B2, upsample in self.decoder:
-            x = upsample(x)
             x = torch.cat((x, res.pop()), dim=1)
             x = B1(x, t)
             x = B2(x, t)
+            x = upsample(x)
         x = self.final_block(x)
         return x
 
@@ -143,6 +149,12 @@ def get_data_loader(batch_size=200):
     return loader
 
 # %%
+def extract(a, t, x_shape):
+    batch_size = t.shape[0]
+    out = a.gather(-1, t)
+    return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(t.device)
+
+# %%
 class schedule():
     def __init__(self, timesteps = 200, device="cuda"):
         self.device = device
@@ -157,11 +169,17 @@ class schedule():
         self.posterior_variance = betas * (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
     def add_noise(self, x,t):
         noise = torch.randn_like(x, device = self.device)
+        A_ = extract(self.sqrt_alphas_cumprod, t, x.shape)
+        B_ = extract(self.sqrt_one_minus_alphas_cumprod, t, x.shape)
+
         A = torch.index_select(self.sqrt_alphas_cumprod, 0, t)
         B = torch.index_select(self.sqrt_one_minus_alphas_cumprod, 0, t)
+        x_ = x
         x = x.permute(1,2,3,0)
         noise_permuted = noise.permute(1,2,3,0)
         C = (A * x + B * noise_permuted).permute(3,0,1,2)
+        C_ = A_ * x_ + B_ * noise
+
         return C, noise
     def loss(self, model, x0, t):
         xt, noise = self.add_noise(x0,t)
@@ -180,11 +198,3 @@ class schedule():
             out = (img[0].detach().cpu().permute(1,2,0)*0.5 + 0.5)*255
             M[t] = out.numpy().astype(np.uint8)
         return np.flip(M, axis = 0)
-
-
-# %%
-S=schedule()
-
-# %%
-S.add_noise()
-# %%
